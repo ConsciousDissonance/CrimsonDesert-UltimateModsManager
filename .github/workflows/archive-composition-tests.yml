@@ -61,6 +61,7 @@ jobs:
         run: >-
           python -m pytest -q -ra
           tests/test_standalone_archive_composition.py
+          tests/test_existing_mods_composition.py
           tests/test_transactional_io.py
           tests/test_transactional_io_absolute_path_guard.py
           tests/test_pathc_roundtrip_preserves_header.py
