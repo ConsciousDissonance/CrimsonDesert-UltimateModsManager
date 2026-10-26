@@ -91,18 +91,28 @@ class TransactionalIO:
         (audit finding I4, 2026-06-10)."""
         return list(self._staged_files)
 
+    def staged_path(self, rel_path: str) -> Path | None:
+        """Resolve a registered relative game path to its native staging path.
+
+        Like stage_file(), the lookup uses CDUMM's slash-separated relative
+        paths on every OS. Unregistered files left in staging are ignored.
+        """
+        if rel_path not in self._staged_files:
+            return None
+        return self._staging_dir / rel_path.replace("/", os.sep)
+
     def stage_file_if_changed(self, rel_path: str, data: bytes) -> bool:
         """Stage only if the target differs from ``data``.
 
         Returns True if a stage was performed, False if skipped.
 
-        Fast path for Phase 3 reverts and PATHC writes: when the live
-        game file already contains these exact bytes (e.g. a prior apply
-        left it in the desired state), skip the read+write+rename cycle
-        of stage_file + commit entirely. Only the size+byte comparison
-        cost is paid.
+        Compare the current pending write first. Comparing only the live
+        file could skip a necessary replacement of an earlier staged write.
+        With no pending write, an identical live file can be left untouched.
         """
-        target = self._game_dir / rel_path.replace("/", os.sep)
+        target = self.staged_path(rel_path) or (
+            self._game_dir / rel_path.replace("/", os.sep)
+        )
         if target.exists():
             try:
                 if target.stat().st_size == len(data):

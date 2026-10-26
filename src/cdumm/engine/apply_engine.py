@@ -2723,11 +2723,6 @@ class ApplyWorker(QObject):
                         build_overlay._last_cache,
                         config=_Config(self._db))
 
-                # Register DDS entries in PATHC (meta/0.pathc) so the game
-                # can find textures via its texture path index.
-                # DMM does this for all DDS overlay entries.
-                self._update_pathc_for_overlay(txn, overlay_packed)
-
             _phase("Phase 2: Compose PAMT files")
             # ── Phase 2: Compose PAMT files (entry updates + byte deltas) ──
             # Collect all PAMTs that need processing
@@ -2871,6 +2866,14 @@ class ApplyWorker(QObject):
                             pass
                 except Exception as e:
                     logger.debug("Safety net scan failed: %s", e)
+
+            # Register the current DDS overlay after disabled mods and the
+            # safety net have reverted their files. Otherwise a disabled
+            # full-index mod's PATHC revert erases active texture mods. This
+            # also matters on repeated Apply when an unchanged DDS index would
+            # have skipped staging before the later revert.
+            if self._overlay_entries:
+                self._update_pathc_for_overlay(txn, overlay_packed)
 
             _phase("Phase 4: PAPGT rebuild")
             # ── Phase 4: PAPGT ─────────────────────────────────────────
@@ -4940,7 +4943,10 @@ class ApplyWorker(QObject):
             return
 
         try:
-            pathc = read_pathc(vanilla_pathc)
+            # Full-index mods may already have staged their texture registrations.
+            # Merge overlays into that result. Without a pending full index, start
+            # from vanilla so disabling a mod removes its old registrations.
+            pathc = read_pathc(txn.staged_path("meta/0.pathc") or vanilla_pathc)
             import bisect
 
             updated = 0
