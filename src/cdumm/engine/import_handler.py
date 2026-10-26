@@ -2231,6 +2231,8 @@ def _detect_standalone_mod(
 
     # Keep source archive precedence when assigning new directory numbers.
     # Filesystem enumeration order varies; PAPGT later sorts the assigned slots.
+    # as_posix() normalizes only the sort key, including on Windows; file I/O
+    # continues to use native Path objects.
     for d in sorted(
         extracted_dir.rglob("*"),
         key=lambda p: p.relative_to(extracted_dir).as_posix(),

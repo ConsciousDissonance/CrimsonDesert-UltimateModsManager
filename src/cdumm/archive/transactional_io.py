@@ -92,7 +92,11 @@ class TransactionalIO:
         return list(self._staged_files)
 
     def staged_path(self, rel_path: str) -> Path | None:
-        """Return a path staged by this transaction, not stale staging files."""
+        """Resolve a registered relative game path to its native staging path.
+
+        Like stage_file(), the lookup uses CDUMM's slash-separated relative
+        paths on every OS. Unregistered files left in staging are ignored.
+        """
         if rel_path not in self._staged_files:
             return None
         return self._staging_dir / rel_path.replace("/", os.sep)

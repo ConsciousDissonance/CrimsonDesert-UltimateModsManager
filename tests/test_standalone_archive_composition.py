@@ -65,11 +65,12 @@ def _setup_indexes(tmp_path):
     return game, vanilla
 
 
-def test_archive_group_priority_survives_filesystem_enumeration(tmp_path, monkeypatch):
+@pytest.mark.parametrize("wrapper", ["CityContent", "Seattle Content 雪"])
+def test_archive_group_priority_survives_filesystem_enumeration(tmp_path, monkeypatch, wrapper):
     """An extractor's directory enumeration must not scramble group precedence."""
     package, game = tmp_path / "package", tmp_path / "game"
     game.mkdir()
-    groups = [package / "CityContent" / name for name in ["0200", "0201", "0202"]]
+    groups = [package / wrapper / name for name in ["0200", "0201", "0202"]]
     for group in groups:
         group.mkdir(parents=True)
         (group / "0.paz").write_bytes(b"synthetic payload")
@@ -95,6 +96,45 @@ def test_archive_group_priority_survives_filesystem_enumeration(tmp_path, monkey
         assert len(set(assigned)) == len(groups)
     finally:
         import_handler.clear_assigned_dirs()
+
+
+@pytest.mark.parametrize(
+    "game_parts",
+    [
+        ("Steam Library", "steamapps", "common", "Crimson Desert"),
+        ("Crimson Desert.app", "Contents", "Resources", "packages"),
+        ("ゲーム 雪", "Crimson Desert"),
+    ],
+    ids=["steam-library", "macos-app-bundle", "unicode-path"],
+)
+def test_pending_index_uses_native_paths_under_supported_install_layouts(tmp_path, game_parts):
+    """Use real host filesystem operations, including commit's file moves.
+
+    Run on Windows, macOS, and Linux: the same relative archive key must find
+    the pending file under each host's native absolute installation path.
+    """
+    game = tmp_path.joinpath(*game_parts)
+    staging = game / "CDMods" / "staging 雪"
+    live_index = game / "meta" / "0.pathc"
+    live_index.parent.mkdir(parents=True)
+    live_index.write_bytes(b"final index")
+    transaction = TransactionalIO(game, staging)
+
+    # Merely existing on disk does not make a file part of this transaction.
+    pending_index = staging / "meta" / "0.pathc"
+    pending_index.parent.mkdir(parents=True)
+    pending_index.write_bytes(b"stale index")
+    assert transaction.staged_path("meta/0.pathc") is None
+
+    transaction.stage_file("meta/0.pathc", b"earlier pending index")
+    assert transaction.staged_path("meta/0.pathc") == pending_index
+    assert transaction.staged_files() == ["meta/0.pathc"]
+    assert transaction.stage_file_if_changed("meta/0.pathc", b"final index")
+    assert not transaction.stage_file_if_changed("meta/0.pathc", b"final index")
+    transaction.commit()
+    assert live_index.read_bytes() == b"final index"
+    assert not pending_index.exists()
+    assert not live_index.with_suffix(".pathc.pre-apply").exists()
 
 
 def test_full_index_mod_and_overlay_keep_both_texture_sets(tmp_path):
