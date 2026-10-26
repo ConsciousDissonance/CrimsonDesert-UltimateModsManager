@@ -7,9 +7,9 @@ run the real Apply pipeline, including its later revert and catalog phases.
 import struct
 from dataclasses import astuple
 from pathlib import Path
+from types import FunctionType, MethodType, SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent
 
 from cdumm.archive.hashlittle import compute_pamt_hash
 from cdumm.archive.overlay_builder import build_overlay
@@ -131,31 +131,39 @@ def _install_texture_mod(db, tmp_path, priority=10, entry="ui/texture/existing.d
 
 
 def _apply(game, vanilla, db):
-    """Reopen the database in a fresh worker, and force the full pipeline.
+    """Run all production Apply methods with lightweight signal recorders.
 
+    Only Qt's signal transport is substituted; composition, backups, reverts,
+    overlay generation, catalog rebuilding, and commit use the actual methods.
+    These file regressions need no GUI lifecycle (covered by the worker/GUI
+    tests), avoiding Qt callback finalization faults on Python 3.10/Linux.
     Removing the normal Apply shortcut ensures repeated-run assertions exercise
     composition/revert rather than merely reporting an unchanged fingerprint.
     """
     invalidate_apply_fingerprint(game)
-    worker = ApplyWorker(game, vanilla, db.db_path)
     errors, finished = [], []
-    worker.error_occurred.connect(errors.append)
-    worker.finished.connect(lambda: finished.append(True))
-    try:
-        worker.run()
-        assert errors == []
-        assert finished == [True]
-    finally:
-        # The tests using this helper keep pytest-qt's qapp alive. Destroy each
-        # worker while its signal callbacks and the Qt application still exist,
-        # rather than leaving C++/Python ownership cleanup to interpreter exit.
-        worker.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    worker = SimpleNamespace(
+        _game_dir=game,
+        _vanilla_dir=vanilla,
+        _db_path=db.db_path,
+        _force_outdated=False,
+        _soft_warnings=[],
+        error_occurred=SimpleNamespace(emit=errors.append),
+        finished=SimpleNamespace(emit=lambda: finished.append(True)),
+        progress_updated=SimpleNamespace(emit=lambda *_: None),
+        warning=SimpleNamespace(emit=lambda *_: None),
+    )
+    for name, method in vars(ApplyWorker).items():
+        if isinstance(method, FunctionType) and name != "__init__":
+            setattr(worker, name, MethodType(method, worker))
+    worker.run()
+    assert errors == []
+    assert finished == [True]
 
 
 @pytest.mark.parametrize("texture_path", ["ui/texture/existing.dds", "ui/texture/base.dds"])
 def test_disabling_new_mod_keeps_preexisting_mods_through_complete_apply(
-    tmp_path, db, texture_path, qapp
+    tmp_path, db, texture_path
 ):
     game, vanilla = _setup_game(tmp_path, db)
     _install_texture_mod(db, tmp_path, entry=texture_path)
@@ -213,7 +221,7 @@ def test_disabling_new_mod_keeps_preexisting_mods_through_complete_apply(
 
 @pytest.mark.parametrize("existing_priority,new_priority", [(1, 5), (20, 5)])
 def test_existing_full_index_conflicts_still_follow_load_order(
-    tmp_path, db, existing_priority, new_priority, qapp
+    tmp_path, db, existing_priority, new_priority
 ):
     """Full-index replacements still pick a winner; DDS overlays layer onto it."""
     game, vanilla = _setup_game(tmp_path, db)
