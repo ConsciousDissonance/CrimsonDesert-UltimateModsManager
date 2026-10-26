@@ -9,6 +9,7 @@ from dataclasses import astuple
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent
 
 from cdumm.archive.hashlittle import compute_pamt_hash
 from cdumm.archive.overlay_builder import build_overlay
@@ -140,14 +141,22 @@ def _apply(game, vanilla, db):
     errors, finished = [], []
     worker.error_occurred.connect(errors.append)
     worker.finished.connect(lambda: finished.append(True))
-    worker.run()
-    assert errors == []
-    assert finished == [True]
-    return worker
+    try:
+        worker.run()
+        assert errors == []
+        assert finished == [True]
+    finally:
+        # The tests using this helper keep pytest-qt's qapp alive. Destroy each
+        # worker while its signal callbacks and the Qt application still exist,
+        # rather than leaving C++/Python ownership cleanup to interpreter exit.
+        worker.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.mark.parametrize("texture_path", ["ui/texture/existing.dds", "ui/texture/base.dds"])
-def test_disabling_new_mod_keeps_preexisting_mods_through_complete_apply(tmp_path, db, texture_path):
+def test_disabling_new_mod_keeps_preexisting_mods_through_complete_apply(
+    tmp_path, db, texture_path, qapp
+):
     game, vanilla = _setup_game(tmp_path, db)
     _install_texture_mod(db, tmp_path, entry=texture_path)
     original = (game / "0001" / "0.paz").read_bytes()
@@ -204,7 +213,7 @@ def test_disabling_new_mod_keeps_preexisting_mods_through_complete_apply(tmp_pat
 
 @pytest.mark.parametrize("existing_priority,new_priority", [(1, 5), (20, 5)])
 def test_existing_full_index_conflicts_still_follow_load_order(
-    tmp_path, db, existing_priority, new_priority
+    tmp_path, db, existing_priority, new_priority, qapp
 ):
     """Full-index replacements still pick a winner; DDS overlays layer onto it."""
     game, vanilla = _setup_game(tmp_path, db)
