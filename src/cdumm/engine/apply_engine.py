@@ -4940,7 +4940,10 @@ class ApplyWorker(QObject):
             return
 
         try:
-            pathc = read_pathc(vanilla_pathc)
+            # Full-index mods may already have staged their texture registrations.
+            # Merge overlays into that result. Without a pending full index, start
+            # from vanilla so disabling a mod removes its old registrations.
+            pathc = read_pathc(txn.staged_path("meta/0.pathc") or vanilla_pathc)
             import bisect
 
             updated = 0
